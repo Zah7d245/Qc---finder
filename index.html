@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Universal Auto-QC Finder</title>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; }
+    body { background-color: #0b0f19; color: #f1f5f9; padding: 20px; min-height: 100vh; }
+    h1 { text-align: center; margin-bottom: 8px; color: #38bdf8; font-size: 24px; }
+    p.sub { text-align: center; color: #94a3b8; margin-bottom: 25px; font-size: 13px; }
+    .fetch-box { max-width: 700px; margin: 0 auto 25px auto; background: #161e2e; padding: 15px; border-radius: 12px; border: 1px solid #1e293b; }
+    .input-group { display: flex; flex-direction: column; gap: 10px; }
+    input { width: 100%; padding: 14px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 15px; outline: none; }
+    button { background: #0284c7; color: white; border: none; padding: 14px; border-radius: 8px; font-weight: bold; font-size: 15px; cursor: pointer; transition: 0.2s; }
+    button:hover { background: #0369a1; }
+    .loading { text-align: center; color: #38bdf8; font-weight: bold; margin: 20px 0; display: none; }
+    .results { max-width: 1000px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .qc-card { background: #161e2e; border-radius: 10px; overflow: hidden; border: 1px solid #1e293b; transition: transform 0.2s; }
+    .qc-card:hover { transform: scale(1.02); }
+    .qc-card img { width: 100%; height: 180px; object-fit: cover; display: block; background: #0f172a; }
+    .qc-info { padding: 8px; font-size: 11px; color: #94a3b8; text-align: center; }
+    .source-badge { display: inline-block; background: #0284c7; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+  <h1>Universal QC-Finder</h1>
+  <p class="sub">Unterstützt Weidian, Taobao & 1688 Links</p>
+
+  <div class="fetch-box">
+    <div class="input-group">
+      <input type="text" id="linkInput" placeholder="Weidian / Taobao / 1688 Link hier einfügen...">
+      <button onclick="fetchQCPhotos()">Echte QC-Fotos Suchen</button>
+    </div>
+    <div id="loadingText" class="loading">Durchsuche Agent-Datenbanken nach QC-Fotos...</div>
+  </div>
+
+  <div class="results" id="resultsGrid"></div>
+
+  <script>
+    // Universelle ID-Extraktion für Weidian, Taobao & 1688
+    function extractItemData(url) {
+      let itemId = null;
+      let platform = 'unknown';
+
+      if (url.includes('weidian.com')) {
+        platform = 'weidian';
+        let match = url.match(/itemID=([0-9]+)/i) || url.match(/item\/([0-9]+)/i);
+        if (match) itemId = match[1];
+      } else if (url.includes('taobao.com') || url.includes('tmall.com')) {
+        platform = 'taobao';
+        let match = url.match(/id=([0-9]+)/i);
+        if (match) itemId = match[1];
+      } else if (url.includes('1688.com')) {
+        platform = '1688';
+        let match = url.match(/offer\/([0-9]+)/i) || url.match(/id=([0-9]+)/i);
+        if (match) itemId = match[1];
+      } else {
+        // Generischer Fallback-Check für reine ID-Numbers im Link
+        let match = url.match(/([0-9]{8,12})/);
+        if (match) itemId = match[1];
+      }
+
+      return { itemId, platform };
+    }
+
+    async function fetchQCPhotos() {
+      const link = document.getElementById("linkInput").value.trim();
+      const resultsGrid = document.getElementById("resultsGrid");
+      const loadingText = document.getElementById("loadingText");
+
+      if (!link) {
+        alert("Bitte füge einen Link ein!");
+        return;
+      }
+
+      const { itemId, platform } = extractItemData(link);
+
+      if (!itemId) {
+        alert("Konnte keine gültige Produkt-ID im Link erkennen. Bitte überprüfe den Link.");
+        return;
+      }
+
+      resultsGrid.innerHTML = "";
+      loadingText.style.display = "block";
+
+      let photosFound = false;
+
+      // Primäre API-Abfrage
+      try {
+        const res = await fetch(`https://qc.photos/api/search?id=${itemId}`);
+        const data = await res.json();
+
+        if (data && data.photos && data.photos.length > 0) {
+          renderPhotos(data.photos, "Agent Server");
+          photosFound = true;
+        }
+      } catch (e) {
+        console.log("Fehler bei Primärabfrage, versuche Fallback...");
+      }
+
+      // Falls die Primär-API keine Fotos hat, greife auf die Backup-API zu
+      if (!photosFound) {
+        try {
+          const fallbackRes = await fetch(`https://reparchive.com/api/v1/qc/search?id=${itemId}`);
+          const fallbackData = await fallbackRes.json();
+
+          if (fallbackData && fallbackData.images && fallbackData.images.length > 0) {
+            renderPhotos(fallbackData.images, "Archive Server");
+            photosFound = true;
+          }
+        } catch (e) {
+          console.log("Fallback fehlgeschlagen.");
+        }
+      }
+
+      loadingText.style.display = "none";
+
+      if (!photosFound) {
+        resultsGrid.innerHTML = `
+          <div style="grid-column: 1/-1; text-align: center; background: #161e2e; padding: 20px; border-radius: 10px; border: 1px solid #1e293b;">
+            <p style="color: #ef4444; font-weight: bold; margin-bottom: 8px;">Keine QC-Fotos gefunden</p>
+            <p style="color: #94a3b8; font-size: 13px;">Für die Item-ID <code>${itemId}</code> (${platform.toUpperCase()}) wurden von den Agenten noch keine Quality Check Fotos hochgeladen oder das Produkt ist zu neu.</p>
+          </div>
+        `;
+      }
+    }
+
+    function renderPhotos(photos, source) {
+      const resultsGrid = document.getElementById("resultsGrid");
+      photos.forEach((photoUrl, index) => {
+        const card = document.createElement("div");
+        card.className = "qc-card";
+        card.innerHTML = `
+          <a href="${photoUrl}" target="_blank" title="Klicke für HD Bild">
+            <img src="${photoUrl}" alt="QC Foto ${index + 1}" loading="lazy">
+          </a>
+          <div class="qc-info">
+            QC #${index + 1}<br>
+            <span class="source-badge">${source}</span>
+          </div>
+        `;
+        resultsGrid.appendChild(card);
+      });
+    }
+  </script>
+</body>
+</html>
